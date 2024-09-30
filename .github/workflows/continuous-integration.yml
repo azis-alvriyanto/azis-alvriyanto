@@ -1,0 +1,132 @@
+name: Continuous Integration
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  TZ: Asia/Jakarta
+  EMOJI_CHEAT_SHEETS: "👻,😻,💕,🤍,💨,🧚,🧜‍♀️,🧞,💃,🐣,🐉,🦕,🦖,🐳,🐬,🦋,🌻,🌼,🌱,🌿,🍀,🍃,🍻,🛫,🪂,🚀,🌟,✨,⚡,🔥,🎉"
+
+jobs:
+  build:
+    name: "Build Image"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout main branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Configure GIT
+        run: |
+          git config --global user.email $(git log --reverse --format='%ae' | head -n 1)
+          git config --global user.name $(git log --reverse --format='%an' | head -n 1)
+          git config --global pull.rebase false
+
+      - name: Check if archive branch exists
+        run: |
+          if git ls-remote --exit-code --heads origin archive; then
+            echo "Branch exists."
+            echo "BRANCH_EXISTS=true" >> $GITHUB_ENV
+          else
+            echo "Branch does not exist."
+            echo "BRANCH_EXISTS=false" >> $GITHUB_ENV
+          fi
+
+      - name: Create archive branch if it doesn't exist
+        if: env.BRANCH_EXISTS == 'false'
+        run: |
+          git checkout -b archive
+          git push origin archive
+
+      - name: Checkout archive branch
+        uses: actions/checkout@v4
+        with:
+          ref: archive
+
+      - name: Pull changes form main branch
+        run: |
+          git pull origin main --allow-unrelated-histories --strategy-option=theirs --no-edit
+
+      - name: Check if images directory exists
+        run: |
+          if [ ! -d "./images" ]; then
+            echo "Directory does not exist, wait for creating..."
+            mkdir -p ./images
+          else
+            echo "Directory already exists."
+          fi
+
+      - name: Generate user contribution graphs
+        uses: Platane/snk@v3
+        with:
+          github_user_name: ${{ github.repository_owner }}
+          outputs: |
+            ./images/user-contribution-graphs/github-snake.svg
+            ./images/user-contribution-graphs/github-snake-dark.svg?palette=github-dark
+            ./images/user-contribution-graphs/ocean.gif?color_snake=orange&color_dots=#bfd6f6,#8dbdff,#64a1f4,#4b91f1,#3c7dd9
+
+      - name: Check for changes
+        run: |
+          changes=$(git status --porcelain)
+          if [ -n "$changes" ]; then
+            echo "Changes detected"
+            echo "CHANGES_EXIST=true" >> $GITHUB_ENV
+          else
+            echo "No changes to commit"
+            echo "CHANGES_EXIST=false" >> $GITHUB_ENV
+          fi
+
+      - name: Commit changes
+        if: env.CHANGES_EXIST == 'true'
+        run: |
+          git add ./images/user-contribution-graphs
+          git commit -am "chore(bot): generate user's contribution graph with snake game at $(date '+%a, %d %b %Y %H:%M:%S (GMT+07:00)' | tr '[:upper:]' '[:lower:]') $(echo $EMOJI_CHEAT_SHEETS | tr ',' '\n' | shuf -n 1)"
+
+      - name: Generate cards
+        uses: vn7n24fzkq/github-profile-summary-cards@release
+        env:
+          GITHUB_TOKEN: ${{ secrets.WORKFLOW_GITHUB_TOKEN }}
+        with:
+          USERNAME: ${{ github.repository_owner }}
+          BRANCH_NAME: archive
+          UTC_OFFSET: 7
+          EXCLUDE: ""
+          AUTO_PUSH: false
+
+      - name: Manage generate card result directory
+        run: |
+          rm -rf ./images/profile-summary-cards
+          mv ./profile-summary-card-output ./images/profile-summary-cards
+
+      - name: Check for changes
+        run: |
+          changes=$(git status --porcelain)
+          if [ -n "$changes" ]; then
+            echo "Changes detected"
+            echo "CHANGES_EXIST=true" >> $GITHUB_ENV
+          else
+            echo "No changes to commit"
+            echo "CHANGES_EXIST=false" >> $GITHUB_ENV
+          fi
+
+      - name: Commit changes
+        if: env.CHANGES_EXIST == 'true'
+        run: |
+          git add ./images/profile-summary-cards
+          git commit -am "chore(bot): generate profile summary cards at $(date '+%a, %d %b %Y %H:%M:%S (GMT+07:00)' | tr '[:upper:]' '[:lower:]') $(echo $EMOJI_CHEAT_SHEETS | tr ',' '\n' | shuf -n 1)"
+
+      - name: Push changes
+        if: env.CHANGES_EXIST == 'true'
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.WORKFLOW_GITHUB_TOKEN }}
+          branch: archive
+          force: true
